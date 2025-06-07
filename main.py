@@ -1,124 +1,107 @@
-import telebot
-import gspread
-import uuid
-import json
 import os
+import requests
+import json
+import uuid
 from flask import Flask, request
+import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# ==== Настройки окружения ====
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-SPREADSHEET_NAME = "TelegramOrders"
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+API_URL = f"https://api.telegram.org/bot{TOKEN}"
+SPREADSHEET_NAME = os.getenv("SPREADSHEET_NAME", "TelegramOrders")
 
-# ==== Проверка переменных ====
-print(f"✅ TELEGRAM_TOKEN: {'Set' if TELEGRAM_TOKEN else 'Missing'}")
-print(f"✅ WEBHOOK_URL: {WEBHOOK_URL}")
-print(f"✅ GOOGLE_CREDENTIALS_JSON: {GOOGLE_CREDENTIALS_JSON[:100]}...")
-
-if not TELEGRAM_TOKEN or not GOOGLE_CREDENTIALS_JSON or not WEBHOOK_URL:
-    raise ValueError("❌ One or more environment variables are missing.")
-
-# ==== Google Sheets подключение ====
+# ===== Google Sheets подключение =====
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-sheet = client.open(SPREADSHEET_NAME).sheet1
+gs_client = gspread.authorize(creds)
+sheet = gs_client.open(SPREADSHEET_NAME).sheet1
 
-# ==== Flask + Bot ====
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
 app = Flask(__name__)
-user_data = {}
+
+# In-memory state (будет сбрасываться при каждом рестарте!)
 user_state = {}
+user_data = {}
 
-# ==== Команда /start ====
-@bot.message_handler(commands=['start'])
-def start(message):
-    user_id = message.chat.id
-    user_data[user_id] = {}
-    user_state[user_id] = 'order'
-    bot.send_message(user_id, "👋 Hello! What would you like to order?")
-    print(f"✅ /start от {user_id}")
+questions = [
+    ("order", "📝 Что хотите заказать?"),
+    ("name", "👤 Ваше имя?"),
+    ("phone", "📞 Ваш телефон?"),
+    ("email", "📧 Ваш email?"),
+    ("address", "🏠 Адрес доставки или самовывоз?"),
+    ("comment", "💬 Комментарий к заказу?")
+]
 
-# ==== Обработка сообщений ====
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
-    user_id = message.chat.id
-    text = message.text
-    print(f"📩 Сообщение от {user_id}: {text}")
+def next_question(state):
+    idx = [q[0] for q in questions].index(state)
+    return questions[idx+1][0] if idx+1 < len(questions) else None
 
-    if user_id not in user_state:
-        bot.send_message(user_id, "Please type /start to begin.")
-        return
+def next_prompt(state):
+    idx = [q[0] for q in questions].index(state)
+    return questions[idx+1][1] if idx+1 < len(questions) else None
 
-    state = user_state[user_id]
-    if state == 'order':
-        user_data[user_id]['order'] = text
-        user_state[user_id] = 'name'
-        bot.send_message(user_id, "👤 Your name?")
-    elif state == 'name':
-        user_data[user_id]['name'] = text
-        user_state[user_id] = 'phone'
-        bot.send_message(user_id, "📞 Your phone number?")
-    elif state == 'phone':
-        user_data[user_id]['phone'] = text
-        user_state[user_id] = 'email'
-        bot.send_message(user_id, "📧 Your email?")
-    elif state == 'email':
-        user_data[user_id]['email'] = text
-        user_state[user_id] = 'address'
-        bot.send_message(user_id, "📍 Delivery address or pickup?")
-    elif state == 'address':
-        user_data[user_id]['address'] = text
-        user_state[user_id] = 'comment'
-        bot.send_message(user_id, "💬 Any comments for the order?")
-    elif state == 'comment':
-        user_data[user_id]['comment'] = text
+@app.route("/webhook", methods=['POST'])
+def webhook():
+    data = request.get_json()
+    if not data or "message" not in data:
+        return '', 200
+
+    chat_id = data["message"]["chat"]["id"]
+    text = data["message"].get("text", "").strip()
+
+    # Новый пользователь или /start — начинаем опрос
+    if text == "/start" or chat_id not in user_state:
+        user_state[chat_id] = "order"
+        user_data[chat_id] = {}
+        send_message(chat_id, questions[0][1])
+        return '', 200
+
+    state = user_state.get(chat_id, "order")
+    user_data[chat_id][state] = text
+
+    # Переходим к следующему вопросу
+    nxt = next_question(state)
+    if nxt:
+        user_state[chat_id] = nxt
+        send_message(chat_id, next_prompt(state))
+    else:
+        # Опрос окончен — сохраняем в Google Sheets!
         order_id = str(uuid.uuid4())[:8]
         row = [
             order_id,
-            user_data[user_id].get('order'),
-            user_data[user_id].get('name'),
-            user_data[user_id].get('phone'),
-            user_data[user_id].get('email'),
-            user_data[user_id].get('address'),
-            user_data[user_id].get('comment'),
+            user_data[chat_id].get('order', ''),
+            user_data[chat_id].get('name', ''),
+            user_data[chat_id].get('phone', ''),
+            user_data[chat_id].get('email', ''),
+            user_data[chat_id].get('address', ''),
+            user_data[chat_id].get('comment', '')
         ]
-        sheet.append_row(row)
-        bot.send_message(user_id, f"✅ Thank you! Your order (ID: {order_id}) has been saved.")
-        print(f"📦 Order saved: {row}")
-        user_state.pop(user_id, None)
-        user_data.pop(user_id, None)
+        try:
+            sheet.append_row(row)
+            send_message(chat_id, f"✅ Спасибо! Ваш заказ (ID: {order_id}) сохранён.")
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка при сохранении заказа: {e}")
 
-# ==== Обработка Webhook ====
-@app.route("/webhook", methods=['POST'])
-def webhook():
-    print("🌐 Webhook triggered")
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        print(f"📨 Incoming update: {json_string[:200]}...")
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    else:
-        print("⚠️ Unsupported content type")
-        return 'Unsupported Media Type', 415
+        # Чистим данные пользователя
+        user_state.pop(chat_id, None)
+        user_data.pop(chat_id, None)
+    return '', 200
+
+def send_message(chat_id, text):
+    try:
+        requests.post(
+            f"{API_URL}/sendMessage",
+            json={"chat_id": chat_id, "text": text}
+        )
+    except Exception as e:
+        print("Ошибка при отправке сообщения:", e)
 
 @app.route("/", methods=["GET"])
 def index():
-    return "✅ Bot is running"
+    return "✅ Flask Telegram-GSheets Order Bot работает!"
 
-# ==== Установка Webhook ====
-bot.remove_webhook()
-bot.set_webhook(url=WEBHOOK_URL)
-print(f"📡 Webhook set to: {WEBHOOK_URL}")
-
-# ==== Запуск Flask-сервера (для Render или локально) ====
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
 
 
