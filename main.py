@@ -8,13 +8,21 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # ==== Настройки ====
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
-SPREADSHEET_NAME = "TelegramOrders"
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+SPREADSHEET_NAME = "TelegramOrders"
+
+# Проверка переменной
+if not GOOGLE_CREDENTIALS_JSON:
+    raise ValueError("❌ GOOGLE_CREDENTIALS_JSON is empty or missing!")
+
+creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
 
 # ==== Google Sheets ====
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_dict = json.loads(GOOGLE_CREDS_JSON)
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open(SPREADSHEET_NAME).sheet1
@@ -79,7 +87,6 @@ def handle_message(message):
         ]
         sheet.append_row(row)
         bot.send_message(user_id, f"✅ Thank you! Your order (ID: {order_id}) has been saved.")
-        # Очистка
         user_state.pop(user_id, None)
         user_data.pop(user_id, None)
 
@@ -98,7 +105,13 @@ def webhook():
 def index():
     return "Bot is running"
 
-# ==== Запуск ====
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5000)))
+# ==== Установка Webhook (важно для Render) ====
+bot.remove_webhook()
+bot.set_webhook(url=WEBHOOK_URL)
+
+# ВНИМАНИЕ: ЭТО УЖЕ НЕ НУЖНО НА RENDER:
+# if __name__ == "__main__":
+#     app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5000)))
+
+
 
