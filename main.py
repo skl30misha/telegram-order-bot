@@ -12,17 +12,20 @@ GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 SPREADSHEET_NAME = "TelegramOrders"
 
-# Проверка переменной
-if not GOOGLE_CREDENTIALS_JSON:
-    raise ValueError("❌ GOOGLE_CREDENTIALS_JSON is empty or missing!")
+# ==== Проверка переменных ====
+print(f"✅ TELEGRAM_TOKEN: {'Set' if TELEGRAM_TOKEN else 'Missing'}")
+print(f"✅ WEBHOOK_URL: {WEBHOOK_URL}")
+print(f"✅ GOOGLE_CREDENTIALS_JSON (start): {GOOGLE_CREDENTIALS_JSON[:100]}...")  # Логируем первые 100 символов
 
-creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+if not TELEGRAM_TOKEN or not GOOGLE_CREDENTIALS_JSON or not WEBHOOK_URL:
+    raise ValueError("❌ Одна из переменных окружения отсутствует")
 
 # ==== Google Sheets ====
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive"
 ]
+creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open(SPREADSHEET_NAME).sheet1
@@ -33,19 +36,21 @@ app = Flask(__name__)
 user_data = {}
 user_state = {}
 
-# ==== Старт ====
+# ==== Команда /start ====
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.chat.id
     user_data[user_id] = {}
     user_state[user_id] = 'order'
     bot.send_message(user_id, "👋 Hello! What would you like to order?")
+    print(f"👉 /start от {user_id}")
 
-# ==== Главный обработчик ====
+# ==== Обработка всех сообщений ====
 @bot.message_handler(func=lambda m: True)
 def handle_message(message):
     user_id = message.chat.id
     text = message.text
+    print(f"📩 Получено сообщение от {user_id}: {text}")
 
     if user_id not in user_state:
         bot.send_message(user_id, "Please type /start to begin.")
@@ -87,31 +92,32 @@ def handle_message(message):
         ]
         sheet.append_row(row)
         bot.send_message(user_id, f"✅ Thank you! Your order (ID: {order_id}) has been saved.")
+        print(f"📦 Order saved: {row}")
         user_state.pop(user_id, None)
         user_data.pop(user_id, None)
 
 # ==== Webhook endpoint ====
 @app.route("/webhook", methods=['POST'])
 def webhook():
+    print("🌐 Webhook triggered")
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
+        print(f"📨 Incoming update: {json_string[:200]}...")
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
         return '', 200
     else:
+        print("⚠️ Unsupported content-type")
         return 'Unsupported Media Type', 415
 
 @app.route("/", methods=["GET"])
 def index():
     return "Bot is running"
 
-# ==== Установка Webhook (важно для Render) ====
+# ==== Установка Webhook ====
 bot.remove_webhook()
 bot.set_webhook(url=WEBHOOK_URL)
-
-# ВНИМАНИЕ: ЭТО УЖЕ НЕ НУЖНО НА RENDER:
-# if __name__ == "__main__":
-#     app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5000)))
+print(f"📡 Webhook set to: {WEBHOOK_URL}")
 
 
 
