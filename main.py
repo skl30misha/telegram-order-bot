@@ -94,7 +94,7 @@ def send_message(chat_id, text):
             json={"chat_id": chat_id, "text": text}
         )
     except Exception as e:
-        print("Ошибка при отправке сообщения:", e)
+        print("❌ Error while sending message:", e)
 
 @app.route("/", methods=["GET"])
 def index():
