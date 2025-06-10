@@ -24,12 +24,12 @@ user_state = {}
 user_data = {}
 
 questions = [
-    ("order", "📝 Что хотите заказать?"),
-    ("name", "👤 Ваше имя?"),
-    ("phone", "📞 Ваш телефон?"),
-    ("email", "📧 Ваш email?"),
-    ("address", "🏠 Адрес доставки или самовывоз?"),
-    ("comment", "💬 Комментарий к заказу?")
+    ("order",   "📝 What would you like to order?"),
+    ("name",    "👤 Your name?"),
+    ("phone",   "📞 Your phone number?"),
+    ("email",   "📧 Your email?"),
+    ("address", "🏠 Delivery address or pickup?"),
+    ("comment", "💬 Any comments for the order?")
 ]
 
 def next_question(state):
