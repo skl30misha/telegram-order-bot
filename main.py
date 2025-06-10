@@ -78,9 +78,9 @@ def webhook():
         ]
         try:
             sheet.append_row(row)
-            send_message(chat_id, f"✅ Спасибо! Ваш заказ (ID: {order_id}) сохранён.")
+            send_message(chat_id, f"✅ Thank you! Your order (ID: {order_id}) has been saved.")
         except Exception as e:
-            send_message(chat_id, f"❌ Ошибка при сохранении заказа: {e}")
+            send_message(chat_id, f"❌ Error while saving your order: {e}")
 
         # Чистим данные пользователя
         user_state.pop(chat_id, None)
